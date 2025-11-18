@@ -1,0 +1,27 @@
+# TrueWipe Bootable Environment Configuration
+
+# Default wipe method
+# Options: 1-pass, 3-pass, 7-pass
+DEFAULT_WIPE_METHOD=3-pass
+
+# Verification level
+# Options: quick, thorough, forensic
+DEFAULT_VERIFICATION=thorough
+
+# Protected filesystems (never wiped)
+PROTECTED_FILESYSTEMS=ntfs,ext4,apfs,hfs+
+
+# Protected mount points (never wiped)
+PROTECTED_MOUNT_POINTS=/,/System,/Library,/boot
+
+# Logging settings
+LOG_LEVEL=INFO
+LOG_FILE=/var/log/truewipe.log
+
+# Network settings (for remote reporting)
+ADMIN_PANEL_URL=http://localhost:3000
+NETWORK_TIMEOUT=30
+
+# Security settings
+REQUIRE_CONFIRMATION=true
+SHOW_DETAILED_PROGRESS=true

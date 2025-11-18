@@ -1,0 +1,20 @@
+{
+  "name": "truewipe-client",
+  "version": "1.0.0",
+  "description": "Client software for the TrueWipe Data Destruction System",
+  "main": "client.js",
+  "scripts": {
+    "start": "node client.js",
+    "dev": "nodemon client.js"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.2",
+    "os": "^0.1.2",
+    "child_process": "^1.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "author": "TrueWipe Team",
+  "license": "MIT"
+}

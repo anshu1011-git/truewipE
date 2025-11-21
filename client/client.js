@@ -2,6 +2,7 @@ const io = require('socket.io-client');
 const os = require('os');
 const { exec, spawn } = require('child_process');
 const path = require('path');
+const TrueWipe = require('../truewipe');
 
 // Configuration
 const ADMIN_PANEL_URL = process.env.ADMIN_PANEL_URL || 'http://localhost:3000';
@@ -13,6 +14,7 @@ const socket = io(ADMIN_PANEL_URL);
 
 let deviceId = null;
 let currentJobId = null;
+let truewipe = new TrueWipe();
 
 console.log(`TrueWipe Client starting...`);
 console.log(`Connecting to admin panel at ${ADMIN_PANEL_URL}`);
@@ -47,7 +49,7 @@ socket.on('registration_error', (data) => {
 
 // Handle wipe command from admin panel
 socket.on('wipe_command', async (data) => {
-    console.log(`Received wipe command for job ${data.jobId} with method ${data.method} and verification ${data.verificationLevel}`);
+    console.log(`Received wipe command for job ${data.jobId} with method ${data.method}`);
     
     currentJobId = data.jobId;
     
@@ -59,8 +61,8 @@ socket.on('wipe_command', async (data) => {
     });
     
     try {
-        // Execute the advanced wipe process
-        await executeAdvancedWipe(data.method, data.verificationLevel);
+        // Execute the wipe process using TrueWipe
+        await executeWipeWithTrueWipe(data.method, data.verificationLevel);
         
         // Report completion
         socket.emit('job_status_update', {
@@ -69,10 +71,7 @@ socket.on('wipe_command', async (data) => {
             progress: 100,
             result: {
                 message: 'Data wipe completed successfully',
-                timestamp: new Date().toISOString(),
-                method: data.method,
-                verificationLevel: data.verificationLevel,
-                confidence: getConfidenceLevel(data.verificationLevel)
+                timestamp: new Date().toISOString()
             }
         });
         
@@ -138,61 +137,35 @@ function getIpAddress() {
     return 'unknown';
 }
 
-// Execute the advanced wipe process
-async function executeAdvancedWipe(method, verificationLevel) {
-    console.log(`Starting advanced wipe process with ${method} method and ${verificationLevel} verification`);
+// Execute the actual wipe process using TrueWipe
+async function executeWipeWithTrueWipe(method, verificationLevel) {
+    console.log(`Starting wipe process with ${method} method`);
     
-    // In a real implementation, this would:
-    // 1. Import the TrueWipe class
-    // 2. Create an instance
-    // 3. Call executeAdvancedWipe with the specified parameters
-    // 4. Report progress through callbacks
-    
-    // For demonstration purposes, we'll simulate the process
-    return new Promise((resolve, reject) => {
-        // Simulate wipe progress
-        let progress = 0;
-        const interval = setInterval(() => {
-            progress += Math.floor(Math.random() * 5) + 1;
-            
-            if (progress >= 100) {
-                progress = 100;
-                clearInterval(interval);
-                
-                // Update final progress
+    // If verification level is provided, use advanced wipe
+    if (verificationLevel) {
+        await truewipe.executeAdvancedWipe(method, verificationLevel, (status) => {
+            // Report progress to admin panel
+            if (status.progress !== undefined && currentJobId) {
                 socket.emit('job_status_update', {
                     jobId: currentJobId,
                     status: 'in-progress',
-                    progress: progress
-                });
-                
-                // Small delay before completion
-                setTimeout(() => {
-                    resolve();
-                }, 1000);
-            } else if (progress < 100) {
-                // Update progress
-                socket.emit('job_status_update', {
-                    jobId: currentJobId,
-                    status: 'in-progress',
-                    progress: progress
+                    progress: status.progress
                 });
             }
-        }, 300);
-    });
-}
-
-// Get confidence level based on verification method
-function getConfidenceLevel(verificationLevel) {
-    const confidenceMap = {
-        'quick': 0.95,
-        'thorough': 0.99,
-        'forensic': 0.999,
-        'military': 0.9999,
-        'quantum': 0.99999
-    };
-    
-    return confidenceMap[verificationLevel] || 0.95;
+        });
+    } else {
+        // Use basic wipe
+        await truewipe.executeWipe(method, (status) => {
+            // Report progress to admin panel
+            if (status.progress !== undefined && currentJobId) {
+                socket.emit('job_status_update', {
+                    jobId: currentJobId,
+                    status: 'in-progress',
+                    progress: status.progress
+                });
+            }
+        });
+    }
 }
 
 // Handle disconnection

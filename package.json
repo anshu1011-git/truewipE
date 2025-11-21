@@ -6,9 +6,9 @@
   "scripts": {
     "start": "node truewipe.js",
     "demo": "node truewipe.js",
+    "test": "node test_real_wipe.js",
     "admin": "cd admin-panel && npm start",
     "client": "cd client && npm start",
-    "test": "jest",
     "install-all": "npm install && cd admin-panel && npm install && cd ../client && npm install",
     "advanced-demo": "node truewipe.js --advanced"
   },
@@ -29,11 +29,9 @@
     "socket.io-client": "^4.7.2",
     "sqlite3": "^5.1.6",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
-    "crypto": "^1.0.1"
+    "jsonwebtoken": "^9.0.2"
   },
   "devDependencies": {
-    "jest": "^29.6.2",
-    "nodemon": "^3.0.1"
+    "jest": "^29.6.2"
   }
 }

@@ -5,7 +5,9 @@
 
 const os = require('os');
 const fs = require('fs').promises;
-const crypto = require('crypto');
+const child_process = require('child_process');
+const util = require('util');
+const exec = util.promisify(child_process.exec);
 
 class OSPartitionDetector {
     constructor() {
@@ -52,43 +54,212 @@ class OSPartitionDetector {
      * @returns {Promise<Array>} List of partitions with their details
      */
     async detectPartitions() {
-        // This is a simplified implementation
-        // In a real system, this would use platform-specific tools
-        // like fdisk, lsblk, or diskutil to get actual partition information
+        const platform = os.platform();
         
+        try {
+            if (platform === 'win32') {
+                return await this.detectWindowsPartitions();
+            } else if (platform === 'linux') {
+                return await this.detectLinuxPartitions();
+            } else if (platform === 'darwin') {
+                return await this.detectMacPartitions();
+            } else {
+                // Fallback for other platforms
+                return await this.detectGenericPartitions();
+            }
+        } catch (error) {
+            console.warn('Error detecting partitions, using fallback method:', error.message);
+            return await this.detectGenericPartitions();
+        }
+    }
+
+    /**
+     * Detect partitions on Windows
+     */
+    async detectWindowsPartitions() {
         const partitions = [];
         
-        // On Windows, we would use wmic or similar
-        // On Linux, we would parse /proc/partitions or use lsblk
-        // On macOS, we would use diskutil list
+        try {
+            // Use wmic to get logical disks
+            const { stdout } = await exec('wmic logicaldisk get size,filesystem,name /format:csv');
+            const lines = stdout.trim().split('\n');
+            
+            // Skip header line
+            for (let i = 1; i < lines.length; i++) {
+                const parts = lines[i].split(',');
+                if (parts.length >= 4) {
+                    const driveLetter = parts[2];
+                    const filesystem = parts[3];
+                    const size = parts[1];
+                    
+                    if (driveLetter && driveLetter.length === 2 && driveLetter[1] === ':') {
+                        partitions.push({
+                            device: `\\\\.\\${driveLetter}`,
+                            mountpoint: `${driveLetter}\\`,
+                            filesystem: filesystem.toLowerCase(),
+                            size: size ? this.formatBytes(parseInt(size)) : 'Unknown',
+                            isOS: false // Will be determined later
+                        });
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to use wmic, falling back to drive detection:', error.message);
+            // Fallback to basic drive detection
+            const drives = ['C:', 'D:', 'E:', 'F:', 'G:', 'H:'];
+            for (const drive of drives) {
+                try {
+                    await fs.access(`${drive}\\`);
+                    partitions.push({
+                        device: `\\\\.\\${drive}`,
+                        mountpoint: `${drive}\\`,
+                        filesystem: 'unknown',
+                        size: 'Unknown',
+                        isOS: false
+                    });
+                } catch (e) {
+                    // Drive doesn't exist, skip
+                }
+            }
+        }
         
-        // For simulation, we'll return some sample data
+        return partitions;
+    }
+
+    /**
+     * Detect partitions on Linux
+     */
+    async detectLinuxPartitions() {
+        const partitions = [];
+        
+        try {
+            // Use lsblk to get block devices
+            const { stdout } = await exec('lsblk -J -o NAME,SIZE,FSTYPE,MOUNTPOINT');
+            const data = JSON.parse(stdout);
+            
+            if (data.blockdevices) {
+                for (const device of data.blockdevices) {
+                    if (device.children) {
+                        for (const partition of device.children) {
+                            if (partition.name && partition.fstype) {
+                                partitions.push({
+                                    device: `/dev/${partition.name}`,
+                                    mountpoint: partition.mountpoint || 'Not mounted',
+                                    filesystem: partition.fstype,
+                                    size: partition.size,
+                                    isOS: false // Will be determined later
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to use lsblk, falling back to /proc/partitions:', error.message);
+            // Fallback to /proc/partitions
+            try {
+                const content = await fs.readFile('/proc/partitions', 'utf8');
+                const lines = content.trim().split('\n');
+                
+                // Skip header lines
+                for (let i = 2; i < lines.length; i++) {
+                    const parts = lines[i].trim().split(/\s+/);
+                    if (parts.length >= 4) {
+                        const deviceName = parts[3];
+                        // Skip loop devices and ram devices
+                        if (!deviceName.startsWith('loop') && !deviceName.startsWith('ram')) {
+                            partitions.push({
+                                device: `/dev/${deviceName}`,
+                                mountpoint: 'Unknown',
+                                filesystem: 'unknown',
+                                size: 'Unknown',
+                                isOS: false
+                            });
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to read /proc/partitions:', e.message);
+            }
+        }
+        
+        return partitions;
+    }
+
+    /**
+     * Detect partitions on macOS
+     */
+    async detectMacPartitions() {
+        const partitions = [];
+        
+        try {
+            // Use diskutil to list disks
+            const { stdout } = await exec('diskutil list');
+            const lines = stdout.trim().split('\n');
+            
+            // Parse diskutil output
+            for (const line of lines) {
+                // Look for disk entries
+                const diskMatch = line.match(/^\/dev\/(disk\d+s\d+)/);
+                if (diskMatch) {
+                    const deviceName = diskMatch[1];
+                    partitions.push({
+                        device: `/dev/${deviceName}`,
+                        mountpoint: 'Unknown',
+                        filesystem: 'unknown',
+                        size: 'Unknown',
+                        isOS: false
+                    });
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to use diskutil:', error.message);
+        }
+        
+        return partitions;
+    }
+
+    /**
+     * Generic partition detection
+     */
+    async detectGenericPartitions() {
+        const partitions = [];
+        
+        // Platform-independent approach
         if (os.platform() === 'win32') {
-            // Sample Windows partitions
-            partitions.push(
-                { device: '\\\\.\\C:', mountpoint: 'C:', filesystem: 'ntfs', size: '256GB', isOS: true },
-                { device: '\\\\.\\D:', mountpoint: 'D:', filesystem: 'ntfs', size: '512GB', isOS: false },
-                { device: '\\\\.\\E:', mountpoint: 'E:', filesystem: 'ntfs', size: '1TB', isOS: false }
-            );
-        } else if (os.platform() === 'linux') {
-            // Sample Linux partitions
-            partitions.push(
-                { device: '/dev/sda1', mountpoint: '/', filesystem: 'ext4', size: '50GB', isOS: true },
-                { device: '/dev/sda2', mountpoint: '/home', filesystem: 'ext4', size: '200GB', isOS: false },
-                { device: '/dev/sdb1', mountpoint: '/data', filesystem: 'ext4', size: '1TB', isOS: false }
-            );
-        } else if (os.platform() === 'darwin') {
-            // Sample macOS partitions
-            partitions.push(
-                { device: '/dev/disk0s1', mountpoint: '/', filesystem: 'apfs', size: '256GB', isOS: true },
-                { device: '/dev/disk0s2', mountpoint: '/Volumes/Data', filesystem: 'apfs', size: '512GB', isOS: false }
-            );
+            // For Windows, check common drive letters
+            const drives = ['C:', 'D:', 'E:', 'F:', 'G:', 'H:'];
+            for (const drive of drives) {
+                try {
+                    await fs.access(`${drive}\\`);
+                    partitions.push({
+                        device: `\\\\.\\${drive}`,
+                        mountpoint: `${drive}\\`,
+                        filesystem: 'unknown',
+                        size: 'Unknown',
+                        isOS: drive === 'C:' // Assume C: is OS drive on Windows
+                    });
+                } catch (e) {
+                    // Drive doesn't exist, skip
+                }
+            }
         } else {
-            // Generic fallback
-            partitions.push(
-                { device: '/dev/sda1', mountpoint: '/', filesystem: 'unknown', size: '100GB', isOS: true },
-                { device: '/dev/sda2', mountpoint: '/data', filesystem: 'unknown', size: '500GB', isOS: false }
-            );
+            // For Unix-like systems, check common device paths
+            const devices = ['/dev/sda1', '/dev/sda2', '/dev/sdb1', '/dev/sdb2'];
+            for (const device of devices) {
+                try {
+                    await fs.access(device);
+                    partitions.push({
+                        device: device,
+                        mountpoint: 'Unknown',
+                        filesystem: 'unknown',
+                        size: 'Unknown',
+                        isOS: device.includes('sda1') // Assume first partition is OS
+                    });
+                } catch (e) {
+                    // Device doesn't exist, skip
+                }
+            }
         }
         
         return partitions;
@@ -103,18 +274,60 @@ class OSPartitionDetector {
         const osPartitions = [];
         
         for (const partition of partitions) {
-            // In a real implementation, we would:
-            // 1. Read the superblock or boot sector of the partition
-            // 2. Check for OS-specific signatures
-            // 3. Look for OS installation markers
-            
-            // For now, we'll use the isOS flag from detectPartitions
-            if (partition.isOS) {
+            // Check if this is likely an OS partition
+            const isOS = await this.isOSPartition(partition);
+            if (isOS) {
+                partition.isOS = true;
                 osPartitions.push(partition);
             }
         }
         
         return osPartitions;
+    }
+
+    /**
+     * Determine if a partition is an OS partition
+     * @param {Object} partition - Partition to check
+     * @returns {Promise<boolean>} True if this is an OS partition
+     */
+    async isOSPartition(partition) {
+        // On Windows, assume C: drive is OS
+        if (os.platform() === 'win32' && partition.mountpoint === 'C:\\') {
+            return true;
+        }
+        
+        // On Linux, check common OS mount points
+        if (os.platform() === 'linux') {
+            if (partition.mountpoint === '/' || 
+                partition.mountpoint === '/boot' ||
+                partition.mountpoint === '/system') {
+                return true;
+            }
+        }
+        
+        // On macOS, check system volumes
+        if (os.platform() === 'darwin') {
+            if (partition.mountpoint.includes('/System') ||
+                partition.mountpoint.includes('/Applications')) {
+                return true;
+            }
+        }
+        
+        // Check for OS-specific filesystem signatures
+        try {
+            const signature = await this.readSignature(partition.device);
+            const filesystem = this.identifyFilesystem(signature);
+            
+            // Certain filesystems are more likely to be OS partitions
+            if (['ntfs', 'ext4', 'ext3', 'apfs', 'hfs+'].includes(filesystem)) {
+                // Additional checks could be added here
+                // For now, we'll use the mount point checks above
+            }
+        } catch (error) {
+            console.warn(`Could not read signature for ${partition.device}:`, error.message);
+        }
+        
+        return false;
     }
 
     /**
@@ -140,12 +353,8 @@ class OSPartitionDetector {
      * @returns {Promise<Object>} Partition information
      */
     async getPartitionInfo(devicePath) {
-        // In a real implementation, this would read filesystem metadata
-        // For simulation, we'll return placeholder data
-        
         try {
             // Attempt to read some bytes from the device to identify filesystem
-            // Note: This would require elevated permissions in a real implementation
             const signature = await this.readSignature(devicePath);
             const filesystem = this.identifyFilesystem(signature);
             
@@ -172,13 +381,18 @@ class OSPartitionDetector {
      * @returns {Promise<Buffer>} Signature bytes
      */
     async readSignature(devicePath) {
-        // In a real implementation, this would:
-        // 1. Open the device with appropriate permissions
-        // 2. Read the first few sectors
-        // 3. Extract filesystem signature
-        
-        // For simulation, we'll return a placeholder
-        return Buffer.from([0x00, 0x00, 0x00, 0x00]);
+        // This requires elevated permissions in a real implementation
+        // For now, we'll return a placeholder
+        try {
+            const fd = await fs.open(devicePath, 'r');
+            const buffer = Buffer.alloc(1024);
+            await fd.read(buffer, 0, 1024, 0);
+            await fd.close();
+            return buffer;
+        } catch (error) {
+            // Return empty buffer if we can't read
+            return Buffer.alloc(1024);
+        }
     }
 
     /**
@@ -208,20 +422,18 @@ class OSPartitionDetector {
     }
 
     /**
-     * Advanced OS detection using multiple indicators
-     * @param {string} devicePath - Path to the device/partition
-     * @returns {Promise<boolean>} True if this is an OS partition
+     * Format bytes to human readable format
+     * @param {number} bytes - Number of bytes
+     * @returns {string} Formatted string
      */
-    async advancedOSDetection(devicePath) {
-        // In a real implementation, this would:
-        // 1. Mount the partition read-only
-        // 2. Check for OS-specific directory structures
-        // 3. Look for system files and registry entries
-        // 4. Analyze boot sectors and system areas
+    formatBytes(bytes) {
+        if (bytes === 0) return '0 Bytes';
         
-        // For simulation, we'll use a probabilistic approach
-        const randomCheck = Math.random();
-        return randomCheck < 0.3; // 30% chance of being an OS partition
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
     /**
@@ -257,7 +469,7 @@ class OSPartitionDetector {
         // 3. Use this for verification purposes
         
         // For simulation, we'll generate a random fingerprint
-        return crypto.createHash('sha256')
+        return require('crypto').createHash('sha256')
             .update(devicePath + Date.now().toString())
             .digest('hex');
     }

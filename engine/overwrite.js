@@ -3,6 +3,9 @@
  * Implements multiple overwrite methods for secure data destruction
  */
 
+const fs = require('fs');
+const crypto = require('crypto');
+
 class SecureOverwriteEngine {
     constructor() {
         this.methods = {
@@ -54,22 +57,34 @@ class SecureOverwriteEngine {
      * Single pass with pseudo-random data
      */
     async onePassOverwrite(devicePath, progressCallback) {
-        // In a real implementation, this would:
-        // 1. Open the device for writing
-        // 2. Generate random data patterns
-        // 3. Write the pattern across the entire device
-        // 4. Sync and close the device
-        // 5. Report progress through callback
+        const fd = fs.openSync(devicePath, 'w');
+        const stats = fs.fstatSync(fd);
+        const size = stats.size;
+        const bufferSize = 1024 * 1024; // 1MB buffer
+        const buffer = Buffer.alloc(bufferSize);
         
-        // For simulation, we'll just show progress
-        for (let i = 0; i <= 100; i += 10) {
-            if (progressCallback) {
-                progressCallback(i);
-            }
+        let bytesWritten = 0;
+        
+        while (bytesWritten < size) {
+            // Generate random data
+            crypto.randomFillSync(buffer);
             
-            // Simulate work
-            await this.sleep(200);
+            // Write to device
+            const toWrite = Math.min(bufferSize, size - bytesWritten);
+            fs.writeSync(fd, buffer, 0, toWrite);
+            
+            bytesWritten += toWrite;
+            
+            // Report progress
+            if (progressCallback) {
+                const progress = Math.floor((bytesWritten / size) * 100);
+                progressCallback(progress);
+            }
         }
+        
+        // Sync and close
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
     }
 
     /**
@@ -83,37 +98,53 @@ class SecureOverwriteEngine {
         const passes = [
             { name: 'Zero Fill', pattern: Buffer.alloc(1024, 0) },
             { name: 'One Fill', pattern: Buffer.alloc(1024, 0xFF) },
-            { name: 'Random Data', pattern: this.generateRandomBuffer(1024) }
+            { name: 'Random Data', pattern: null } // Will generate random data
         ];
 
         for (let pass = 0; pass < passes.length; pass++) {
             const passInfo = passes[pass];
             console.log(`Executing pass ${pass + 1}: ${passInfo.name}`);
             
-            // Report pass start
-            if (progressCallback) {
-                progressCallback({
-                    pass: pass + 1,
-                    totalPasses: passes.length,
-                    name: passInfo.name,
-                    progress: 0
-                });
+            const fd = fs.openSync(devicePath, 'w');
+            const stats = fs.fstatSync(fd);
+            const size = stats.size;
+            const bufferSize = 1024 * 1024; // 1MB buffer
+            const buffer = Buffer.alloc(bufferSize);
+            
+            // Fill buffer with appropriate pattern
+            if (passInfo.pattern) {
+                for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
+                    passInfo.pattern.copy(buffer, i);
+                }
             }
             
-            // Simulate the pass
-            for (let i = 0; i <= 100; i += 10) {
+            let bytesWritten = 0;
+            
+            while (bytesWritten < size) {
+                // For random data pass, generate new random data
+                if (!passInfo.pattern) {
+                    crypto.randomFillSync(buffer);
+                }
+                
+                const toWrite = Math.min(bufferSize, size - bytesWritten);
+                fs.writeSync(fd, buffer, 0, toWrite);
+                
+                bytesWritten += toWrite;
+                
                 if (progressCallback) {
+                    const progress = Math.floor((bytesWritten / size) * 100);
                     progressCallback({
                         pass: pass + 1,
                         totalPasses: passes.length,
                         name: passInfo.name,
-                        progress: i
+                        progress: progress
                     });
                 }
-                
-                // Simulate work
-                await this.sleep(150);
             }
+            
+            // Sync and close after each pass
+            fs.fsyncSync(fd);
+            fs.closeSync(fd);
         }
     }
 
@@ -131,38 +162,54 @@ class SecureOverwriteEngine {
             { name: 'Pattern 1', pattern: this.generatePatternBuffer(1024, 0x92, 0x49, 0x24) },
             { name: 'Pattern 2', pattern: this.generatePatternBuffer(1024, 0x49, 0x24, 0x92) },
             { name: 'Pattern 3', pattern: this.generatePatternBuffer(1024, 0x24, 0x92, 0x49) },
-            { name: 'Random Data 1', pattern: this.generateRandomBuffer(1024) },
-            { name: 'Random Data 2', pattern: this.generateRandomBuffer(1024) }
+            { name: 'Random Data 1', pattern: null }, // Will generate random data
+            { name: 'Random Data 2', pattern: null }  // Will generate random data
         ];
 
         for (let pass = 0; pass < passes.length; pass++) {
             const passInfo = passes[pass];
             console.log(`Executing pass ${pass + 1}: ${passInfo.name}`);
             
-            // Report pass start
-            if (progressCallback) {
-                progressCallback({
-                    pass: pass + 1,
-                    totalPasses: passes.length,
-                    name: passInfo.name,
-                    progress: 0
-                });
+            const fd = fs.openSync(devicePath, 'w');
+            const stats = fs.fstatSync(fd);
+            const size = stats.size;
+            const bufferSize = 1024 * 1024; // 1MB buffer
+            const buffer = Buffer.alloc(bufferSize);
+            
+            // Fill buffer with appropriate pattern
+            if (passInfo.pattern) {
+                for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
+                    passInfo.pattern.copy(buffer, i);
+                }
             }
             
-            // Simulate the pass
-            for (let i = 0; i <= 100; i += 5) {
+            let bytesWritten = 0;
+            
+            while (bytesWritten < size) {
+                // For random data passes, generate new random data
+                if (!passInfo.pattern) {
+                    crypto.randomFillSync(buffer);
+                }
+                
+                const toWrite = Math.min(bufferSize, size - bytesWritten);
+                fs.writeSync(fd, buffer, 0, toWrite);
+                
+                bytesWritten += toWrite;
+                
                 if (progressCallback) {
+                    const progress = Math.floor((bytesWritten / size) * 100);
                     progressCallback({
                         pass: pass + 1,
                         totalPasses: passes.length,
                         name: passInfo.name,
-                        progress: i
+                        progress: progress
                     });
                 }
-                
-                // Simulate work
-                await this.sleep(100);
             }
+            
+            // Sync and close after each pass
+            fs.fsyncSync(fd);
+            fs.closeSync(fd);
         }
     }
 
@@ -184,28 +231,39 @@ class SecureOverwriteEngine {
             const passInfo = patterns[pass];
             console.log(`Executing Gutmann pass ${pass + 1}: ${passInfo.name}`);
             
-            if (progressCallback) {
-                progressCallback({
-                    pass: pass + 1,
-                    totalPasses: patterns.length,
-                    name: passInfo.name,
-                    progress: 0
-                });
+            const fd = fs.openSync(devicePath, 'w');
+            const stats = fs.fstatSync(fd);
+            const size = stats.size;
+            const bufferSize = 1024 * 1024; // 1MB buffer
+            const buffer = Buffer.alloc(bufferSize);
+            
+            // Fill buffer with pattern
+            for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
+                passInfo.pattern.copy(buffer, i);
             }
             
-            // Simulate the pass
-            for (let i = 0; i <= 100; i += 3) {
+            let bytesWritten = 0;
+            
+            while (bytesWritten < size) {
+                const toWrite = Math.min(bufferSize, size - bytesWritten);
+                fs.writeSync(fd, buffer, 0, toWrite);
+                
+                bytesWritten += toWrite;
+                
                 if (progressCallback) {
+                    const progress = Math.floor((bytesWritten / size) * 100);
                     progressCallback({
                         pass: pass + 1,
                         totalPasses: patterns.length,
                         name: passInfo.name,
-                        progress: i
+                        progress: progress
                     });
                 }
-                
-                await this.sleep(50);
             }
+            
+            // Sync and close after each pass
+            fs.fsyncSync(fd);
+            fs.closeSync(fd);
         }
     }
 
@@ -217,38 +275,57 @@ class SecureOverwriteEngine {
         const passes = [
             { name: 'Zero Fill', pattern: Buffer.alloc(1024, 0) },
             { name: 'One Fill', pattern: Buffer.alloc(1024, 0xFF) },
-            { name: 'Random Data 1', pattern: this.generateRandomBuffer(1024) },
-            { name: 'Random Data 2', pattern: this.generateRandomBuffer(1024) },
-            { name: 'Random Data 3', pattern: this.generateRandomBuffer(1024) },
-            { name: 'Random Data 4', pattern: this.generateRandomBuffer(1024) },
-            { name: 'Random Data 5', pattern: this.generateRandomBuffer(1024) }
+            { name: 'Random Data 1', pattern: null },
+            { name: 'Random Data 2', pattern: null },
+            { name: 'Random Data 3', pattern: null },
+            { name: 'Random Data 4', pattern: null },
+            { name: 'Random Data 5', pattern: null }
         ];
 
         for (let pass = 0; pass < passes.length; pass++) {
             const passInfo = passes[pass];
             console.log(`Executing Schneier pass ${pass + 1}: ${passInfo.name}`);
             
-            if (progressCallback) {
-                progressCallback({
-                    pass: pass + 1,
-                    totalPasses: passes.length,
-                    name: passInfo.name,
-                    progress: 0
-                });
+            const fd = fs.openSync(devicePath, 'w');
+            const stats = fs.fstatSync(fd);
+            const size = stats.size;
+            const bufferSize = 1024 * 1024; // 1MB buffer
+            const buffer = Buffer.alloc(bufferSize);
+            
+            // Fill buffer with pattern if not random
+            if (passInfo.pattern) {
+                for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
+                    passInfo.pattern.copy(buffer, i);
+                }
             }
             
-            for (let i = 0; i <= 100; i += 5) {
+            let bytesWritten = 0;
+            
+            while (bytesWritten < size) {
+                // For random data passes, generate new random data
+                if (!passInfo.pattern) {
+                    crypto.randomFillSync(buffer);
+                }
+                
+                const toWrite = Math.min(bufferSize, size - bytesWritten);
+                fs.writeSync(fd, buffer, 0, toWrite);
+                
+                bytesWritten += toWrite;
+                
                 if (progressCallback) {
+                    const progress = Math.floor((bytesWritten / size) * 100);
                     progressCallback({
                         pass: pass + 1,
                         totalPasses: passes.length,
                         name: passInfo.name,
-                        progress: i
+                        progress: progress
                     });
                 }
-                
-                await this.sleep(75);
             }
+            
+            // Sync and close after each pass
+            fs.fsyncSync(fd);
+            fs.closeSync(fd);
         }
     }
 
@@ -272,27 +349,39 @@ class SecureOverwriteEngine {
             const passInfo = passes[pass];
             console.log(`Executing Pfitzner pass ${pass + 1}: ${passInfo.name}`);
             
-            if (progressCallback) {
-                progressCallback({
-                    pass: pass + 1,
-                    totalPasses: passes.length,
-                    name: passInfo.name,
-                    progress: 0
-                });
+            const fd = fs.openSync(devicePath, 'w');
+            const stats = fs.fstatSync(fd);
+            const size = stats.size;
+            const bufferSize = 1024 * 1024; // 1MB buffer
+            const buffer = Buffer.alloc(bufferSize);
+            
+            // Fill buffer with pattern
+            for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
+                passInfo.pattern.copy(buffer, i);
             }
             
-            for (let i = 0; i <= 100; i += 4) {
+            let bytesWritten = 0;
+            
+            while (bytesWritten < size) {
+                const toWrite = Math.min(bufferSize, size - bytesWritten);
+                fs.writeSync(fd, buffer, 0, toWrite);
+                
+                bytesWritten += toWrite;
+                
                 if (progressCallback) {
+                    const progress = Math.floor((bytesWritten / size) * 100);
                     progressCallback({
                         pass: pass + 1,
                         totalPasses: passes.length,
                         name: passInfo.name,
-                        progress: i
+                        progress: progress
                     });
                 }
-                
-                await this.sleep(60);
             }
+            
+            // Sync and close after each pass
+            fs.fsyncSync(fd);
+            fs.closeSync(fd);
         }
     }
 
@@ -301,9 +390,7 @@ class SecureOverwriteEngine {
      */
     generateRandomBuffer(size) {
         const buffer = Buffer.alloc(size);
-        for (let i = 0; i < size; i++) {
-            buffer[i] = Math.floor(Math.random() * 256);
-        }
+        crypto.randomFillSync(buffer);
         return buffer;
     }
 

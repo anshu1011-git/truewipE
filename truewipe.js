@@ -345,6 +345,43 @@ class TrueWipe {
             verificationMethods: this.verifier.getAvailableMethods()
         };
     }
+    
+    /**
+     * Wipe a specific device directly
+     * @param {string} devicePath - Path to the device to wipe
+     * @param {string} method - Wipe method to use
+     * @param {Function} progressCallback - Progress callback
+     */
+    async wipeDevice(devicePath, method, progressCallback) {
+        try {
+            // Verify this is not an OS partition
+            const partitions = await this.partitionDetector.detectPartitions();
+            const osPartitions = await this.partitionDetector.identifyOSPartitions(partitions);
+            
+            if (!this.partitionDetector.isSafeToWipe(devicePath, osPartitions)) {
+                throw new Error(`Device ${devicePath} is protected as an OS partition and cannot be wiped`);
+            }
+            
+            // Execute the wipe
+            await this.overwriteEngine.execute(method, devicePath, progressCallback);
+            
+            // Verify the wipe
+            const verificationResult = await this.verifier.verify(devicePath, 'thorough', progressCallback);
+            
+            if (!verificationResult.success) {
+                throw new Error(`Verification failed: ${verificationResult.message}`);
+            }
+            
+            return {
+                success: true,
+                device: devicePath,
+                method: method,
+                verification: verificationResult
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
 }
 
 module.exports = TrueWipe;

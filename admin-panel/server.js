@@ -5,7 +5,6 @@ const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const path = require('path');
-const crypto = require('crypto');
 
 // Initialize Express app
 const app = express();
@@ -83,135 +82,139 @@ const authenticateToken = (req, res, next) => {
 
 // Routes
 app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    
-    if (!username || !password) {
-        return res.status(400).json({ error: 'Username and password required' });
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+  
+  db.get(`SELECT * FROM users WHERE username = ?`, [username], (err, user) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
     }
     
-    db.get(`SELECT * FROM users WHERE username = ?`, [username], (err, user) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
-        
-        if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-        
-        const token = jwt.sign(
-            { id: user.id, username: user.username },
-            JWT_SECRET,
-            { expiresIn: '8h' }
-        );
-        
-        res.json({ token, username: user.username });
-    });
+    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      JWT_SECRET,
+      { expiresIn: '8h' }
+    );
+    
+    res.json({ token, username: user.username });
+  });
 });
 
 app.get('/api/devices', authenticateToken, (req, res) => {
-    db.all(`SELECT * FROM devices ORDER BY registered_at DESC`, [], (err, devices) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
-        res.json(devices);
-    });
+  db.all(`SELECT * FROM devices ORDER BY registered_at DESC`, [], (err, devices) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
+    }
+    res.json(devices);
+  });
 });
 
 app.post('/api/devices/:id/wipe', authenticateToken, (req, res) => {
-    const deviceId = req.params.id;
-    const { method, verificationLevel } = req.body; // Enhanced options
-    
-    if (!['1-pass', '3-pass', '7-pass', 'gutmann', 'schneier', 'pfitzner'].includes(method)) {
-        return res.status(400).json({ error: 'Invalid wipe method' });
+  const deviceId = req.params.id;
+  const { method, verificationLevel } = req.body; // Enhanced options
+  
+  const validMethods = ['1-pass', '3-pass', '7-pass', 'gutmann', 'schneier', 'pfitzner'];
+  const validVerification = ['quick', 'thorough', 'forensic', 'military', 'quantum'];
+  
+  if (!validMethods.includes(method)) {
+    return res.status(400).json({ error: 'Invalid wipe method' });
+  }
+  
+  if (verificationLevel && !validVerification.includes(verificationLevel)) {
+    return res.status(400).json({ error: 'Invalid verification level' });
+  }
+  
+  // Check if device exists
+  db.get(`SELECT * FROM devices WHERE id = ?`, [deviceId], (err, device) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
     }
     
-    if (!['quick', 'thorough', 'forensic', 'military', 'quantum'].includes(verificationLevel)) {
-        return res.status(400).json({ error: 'Invalid verification level' });
+    if (!device) {
+      return res.status(404).json({ error: 'Device not found' });
     }
     
-    // Check if device exists
-    db.get(`SELECT * FROM devices WHERE id = ?`, [deviceId], (err, device) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
-        
-        if (!device) {
-            return res.status(404).json({ error: 'Device not found' });
-        }
-        
-        // Create wipe job
-        const stmt = db.prepare(`INSERT INTO wipe_jobs (device_id, method, status) VALUES (?, ?, ?)`);
-        stmt.run([deviceId, `${method}|${verificationLevel}`, 'pending'], function(err) {
-            if (err) {
-                return res.status(500).json({ error: 'Database error' });
-            }
-            
-            // Notify connected client (if any) about the wipe command
-            io.to(`device_${deviceId}`).emit('wipe_command', {
-                jobId: this.lastID,
-                method: method,
-                verificationLevel: verificationLevel
-            });
-            
-            res.json({ 
-                jobId: this.lastID,
-                message: 'Wipe command sent to device'
-            });
-        });
-        stmt.finalize();
+    // Create wipe job
+    const methodString = verificationLevel ? `${method}|${verificationLevel}` : method;
+    const stmt = db.prepare(`INSERT INTO wipe_jobs (device_id, method, status) VALUES (?, ?, ?)`);
+    stmt.run([deviceId, methodString, 'pending'], function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      
+      // Notify connected client (if any) about the wipe command
+      io.to(`device_${deviceId}`).emit('wipe_command', {
+        jobId: this.lastID,
+        method: method,
+        verificationLevel: verificationLevel
+      });
+      
+      res.json({ 
+        jobId: this.lastID,
+        message: 'Wipe command sent to device'
+      });
     });
+    stmt.finalize();
+  });
 });
 
 app.get('/api/jobs', authenticateToken, (req, res) => {
-    const { deviceId } = req.query;
-    
-    let query = `SELECT w.*, d.name as device_name, d.ip_address 
-                 FROM wipe_jobs w 
-                 JOIN devices d ON w.device_id = d.id`;
-    let params = [];
-    
-    if (deviceId) {
-        query += ` WHERE w.device_id = ?`;
-        params.push(deviceId);
+  const { deviceId } = req.query;
+  
+  let query = `SELECT w.*, d.name as device_name, d.ip_address 
+               FROM wipe_jobs w 
+               JOIN devices d ON w.device_id = d.id`;
+  let params = [];
+  
+  if (deviceId) {
+    query += ` WHERE w.device_id = ?`;
+    params.push(deviceId);
+  }
+  
+  query += ` ORDER BY w.started_at DESC`;
+  
+  db.all(query, params, (err, jobs) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
     }
-    
-    query += ` ORDER BY w.started_at DESC`;
-    
-    db.all(query, params, (err, jobs) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
-        res.json(jobs);
-    });
+    res.json(jobs);
+  });
 });
 
 // New endpoint for compliance reports
 app.get('/api/reports/:jobId', authenticateToken, (req, res) => {
-    const jobId = req.params.jobId;
+  const jobId = req.params.jobId;
+  
+  db.get(`SELECT * FROM wipe_jobs WHERE id = ?`, [jobId], (err, job) => {
+    if (err) {
+      return res.status(500).json({ error: 'Database error' });
+    }
     
-    db.get(`SELECT * FROM wipe_jobs WHERE id = ?`, [jobId], (err, job) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
-        
-        if (!job) {
-            return res.status(404).json({ error: 'Job not found' });
-        }
-        
-        // Parse the method and verification level
-        const [method, verificationLevel] = job.method.split('|');
-        
-        res.json({
-            jobId: job.id,
-            deviceId: job.device_id,
-            method: method,
-            verificationLevel: verificationLevel,
-            status: job.status,
-            startedAt: job.started_at,
-            completedAt: job.completed_at,
-            result: job.result ? JSON.parse(job.result) : null
-        });
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    
+    // Parse the method and verification level
+    const [method, verificationLevel] = job.method.split('|');
+    
+    res.json({
+      jobId: job.id,
+      deviceId: job.device_id,
+      method: method,
+      verificationLevel: verificationLevel,
+      status: job.status,
+      startedAt: job.started_at,
+      completedAt: job.completed_at,
+      result: job.result ? JSON.parse(job.result) : null
     });
+  });
 });
 
 // WebSocket connection handling

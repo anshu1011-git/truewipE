@@ -3,7 +3,7 @@
  * Implements multiple overwrite methods for secure data destruction
  */
 
-const fs = require('fs');
+const fs = require('fs').promises;
 const crypto = require('crypto');
 
 class SecureOverwriteEngine {
@@ -57,34 +57,34 @@ class SecureOverwriteEngine {
      * Single pass with pseudo-random data
      */
     async onePassOverwrite(devicePath, progressCallback) {
-        const fd = fs.openSync(devicePath, 'w');
-        const stats = fs.fstatSync(fd);
-        const size = stats.size;
-        const bufferSize = 1024 * 1024; // 1MB buffer
-        const buffer = Buffer.alloc(bufferSize);
-        
-        let bytesWritten = 0;
-        
-        while (bytesWritten < size) {
-            // Generate random data
-            crypto.randomFillSync(buffer);
+        try {
+            const stats = await fs.stat(devicePath);
+            const size = stats.size;
+            const chunkSize = 1024 * 1024; // 1MB chunks
+            const totalChunks = Math.ceil(size / chunkSize);
             
-            // Write to device
-            const toWrite = Math.min(bufferSize, size - bytesWritten);
-            fs.writeSync(fd, buffer, 0, toWrite);
+            // Open file for writing
+            const fileHandle = await fs.open(devicePath, 'w');
             
-            bytesWritten += toWrite;
-            
-            // Report progress
-            if (progressCallback) {
-                const progress = Math.floor((bytesWritten / size) * 100);
-                progressCallback(progress);
+            for (let i = 0; i < totalChunks; i++) {
+                // Generate random data chunk
+                const buffer = crypto.randomBytes(Math.min(chunkSize, size - (i * chunkSize)));
+                
+                // Write chunk to file
+                await fileHandle.write(buffer, 0, buffer.length, i * chunkSize);
+                
+                // Report progress
+                if (progressCallback) {
+                    const progress = Math.floor(((i + 1) / totalChunks) * 100);
+                    progressCallback(progress);
+                }
             }
+            
+            // Close file
+            await fileHandle.close();
+        } catch (error) {
+            throw new Error(`Failed to perform 1-pass overwrite: ${error.message}`);
         }
-        
-        // Sync and close
-        fs.fsyncSync(fd);
-        fs.closeSync(fd);
     }
 
     /**
@@ -96,55 +96,55 @@ class SecureOverwriteEngine {
      */
     async threePassOverwrite(devicePath, progressCallback) {
         const passes = [
-            { name: 'Zero Fill', pattern: Buffer.alloc(1024, 0) },
-            { name: 'One Fill', pattern: Buffer.alloc(1024, 0xFF) },
-            { name: 'Random Data', pattern: null } // Will generate random data
+            { name: 'Zero Fill', value: 0x00 },
+            { name: 'One Fill', value: 0xFF },
+            { name: 'Random Data', value: null }
         ];
 
         for (let pass = 0; pass < passes.length; pass++) {
             const passInfo = passes[pass];
             console.log(`Executing pass ${pass + 1}: ${passInfo.name}`);
             
-            const fd = fs.openSync(devicePath, 'w');
-            const stats = fs.fstatSync(fd);
-            const size = stats.size;
-            const bufferSize = 1024 * 1024; // 1MB buffer
-            const buffer = Buffer.alloc(bufferSize);
-            
-            // Fill buffer with appropriate pattern
-            if (passInfo.pattern) {
-                for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
-                    passInfo.pattern.copy(buffer, i);
+            try {
+                const stats = await fs.stat(devicePath);
+                const size = stats.size;
+                const chunkSize = 1024 * 1024; // 1MB chunks
+                const totalChunks = Math.ceil(size / chunkSize);
+                
+                // Open file for writing
+                const fileHandle = await fs.open(devicePath, 'w');
+                
+                for (let i = 0; i < totalChunks; i++) {
+                    let buffer;
+                    
+                    if (passInfo.value !== null) {
+                        // Create buffer filled with specific value
+                        buffer = Buffer.alloc(Math.min(chunkSize, size - (i * chunkSize)), passInfo.value);
+                    } else {
+                        // Create buffer with random data
+                        buffer = crypto.randomBytes(Math.min(chunkSize, size - (i * chunkSize)));
+                    }
+                    
+                    // Write chunk to file
+                    await fileHandle.write(buffer, 0, buffer.length, i * chunkSize);
+                    
+                    // Report progress
+                    if (progressCallback) {
+                        const progress = Math.floor(((i + 1) / totalChunks) * 100);
+                        progressCallback({
+                            pass: pass + 1,
+                            totalPasses: passes.length,
+                            name: passInfo.name,
+                            progress: progress
+                        });
+                    }
                 }
+                
+                // Close file after each pass
+                await fileHandle.close();
+            } catch (error) {
+                throw new Error(`Failed during pass ${pass + 1} (${passInfo.name}): ${error.message}`);
             }
-            
-            let bytesWritten = 0;
-            
-            while (bytesWritten < size) {
-                // For random data pass, generate new random data
-                if (!passInfo.pattern) {
-                    crypto.randomFillSync(buffer);
-                }
-                
-                const toWrite = Math.min(bufferSize, size - bytesWritten);
-                fs.writeSync(fd, buffer, 0, toWrite);
-                
-                bytesWritten += toWrite;
-                
-                if (progressCallback) {
-                    const progress = Math.floor((bytesWritten / size) * 100);
-                    progressCallback({
-                        pass: pass + 1,
-                        totalPasses: passes.length,
-                        name: passInfo.name,
-                        progress: progress
-                    });
-                }
-            }
-            
-            // Sync and close after each pass
-            fs.fsyncSync(fd);
-            fs.closeSync(fd);
         }
     }
 
@@ -157,59 +157,66 @@ class SecureOverwriteEngine {
      */
     async sevenPassOverwrite(devicePath, progressCallback) {
         const passes = [
-            { name: 'Zero Fill', pattern: Buffer.alloc(1024, 0) },
-            { name: 'One Fill', pattern: Buffer.alloc(1024, 0xFF) },
-            { name: 'Pattern 1', pattern: this.generatePatternBuffer(1024, 0x92, 0x49, 0x24) },
-            { name: 'Pattern 2', pattern: this.generatePatternBuffer(1024, 0x49, 0x24, 0x92) },
-            { name: 'Pattern 3', pattern: this.generatePatternBuffer(1024, 0x24, 0x92, 0x49) },
-            { name: 'Random Data 1', pattern: null }, // Will generate random data
-            { name: 'Random Data 2', pattern: null }  // Will generate random data
+            { name: 'Zero Fill', value: 0x00 },
+            { name: 'One Fill', value: 0xFF },
+            { name: 'Pattern 1', pattern: [0x92, 0x49, 0x24] },
+            { name: 'Pattern 2', pattern: [0x49, 0x24, 0x92] },
+            { name: 'Pattern 3', pattern: [0x24, 0x92, 0x49] },
+            { name: 'Random Data 1', value: null },
+            { name: 'Random Data 2', value: null }
         ];
 
         for (let pass = 0; pass < passes.length; pass++) {
             const passInfo = passes[pass];
             console.log(`Executing pass ${pass + 1}: ${passInfo.name}`);
             
-            const fd = fs.openSync(devicePath, 'w');
-            const stats = fs.fstatSync(fd);
-            const size = stats.size;
-            const bufferSize = 1024 * 1024; // 1MB buffer
-            const buffer = Buffer.alloc(bufferSize);
-            
-            // Fill buffer with appropriate pattern
-            if (passInfo.pattern) {
-                for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
-                    passInfo.pattern.copy(buffer, i);
+            try {
+                const stats = await fs.stat(devicePath);
+                const size = stats.size;
+                const chunkSize = 1024 * 1024; // 1MB chunks
+                const totalChunks = Math.ceil(size / chunkSize);
+                
+                // Open file for writing
+                const fileHandle = await fs.open(devicePath, 'w');
+                
+                for (let i = 0; i < totalChunks; i++) {
+                    let buffer;
+                    const chunkLength = Math.min(chunkSize, size - (i * chunkSize));
+                    
+                    if (passInfo.value !== null) {
+                        // Create buffer filled with specific value
+                        buffer = Buffer.alloc(chunkLength, passInfo.value);
+                    } else if (passInfo.pattern) {
+                        // Create buffer with repeating pattern
+                        buffer = Buffer.alloc(chunkLength);
+                        for (let j = 0; j < chunkLength; j++) {
+                            buffer[j] = passInfo.pattern[j % passInfo.pattern.length];
+                        }
+                    } else {
+                        // Create buffer with random data
+                        buffer = crypto.randomBytes(chunkLength);
+                    }
+                    
+                    // Write chunk to file
+                    await fileHandle.write(buffer, 0, buffer.length, i * chunkSize);
+                    
+                    // Report progress
+                    if (progressCallback) {
+                        const progress = Math.floor(((i + 1) / totalChunks) * 100);
+                        progressCallback({
+                            pass: pass + 1,
+                            totalPasses: passes.length,
+                            name: passInfo.name,
+                            progress: progress
+                        });
+                    }
                 }
+                
+                // Close file after each pass
+                await fileHandle.close();
+            } catch (error) {
+                throw new Error(`Failed during pass ${pass + 1} (${passInfo.name}): ${error.message}`);
             }
-            
-            let bytesWritten = 0;
-            
-            while (bytesWritten < size) {
-                // For random data passes, generate new random data
-                if (!passInfo.pattern) {
-                    crypto.randomFillSync(buffer);
-                }
-                
-                const toWrite = Math.min(bufferSize, size - bytesWritten);
-                fs.writeSync(fd, buffer, 0, toWrite);
-                
-                bytesWritten += toWrite;
-                
-                if (progressCallback) {
-                    const progress = Math.floor((bytesWritten / size) * 100);
-                    progressCallback({
-                        pass: pass + 1,
-                        totalPasses: passes.length,
-                        name: passInfo.name,
-                        progress: progress
-                    });
-                }
-            }
-            
-            // Sync and close after each pass
-            fs.fsyncSync(fd);
-            fs.closeSync(fd);
         }
     }
 
@@ -223,7 +230,7 @@ class SecureOverwriteEngine {
         for (let i = 0; i < 35; i++) {
             patterns.push({
                 name: `Gutmann Pattern ${i + 1}`,
-                pattern: this.generateRandomBuffer(1024)
+                buffer: crypto.randomBytes(1024)
             });
         }
 
@@ -231,39 +238,44 @@ class SecureOverwriteEngine {
             const passInfo = patterns[pass];
             console.log(`Executing Gutmann pass ${pass + 1}: ${passInfo.name}`);
             
-            const fd = fs.openSync(devicePath, 'w');
-            const stats = fs.fstatSync(fd);
-            const size = stats.size;
-            const bufferSize = 1024 * 1024; // 1MB buffer
-            const buffer = Buffer.alloc(bufferSize);
-            
-            // Fill buffer with pattern
-            for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
-                passInfo.pattern.copy(buffer, i);
-            }
-            
-            let bytesWritten = 0;
-            
-            while (bytesWritten < size) {
-                const toWrite = Math.min(bufferSize, size - bytesWritten);
-                fs.writeSync(fd, buffer, 0, toWrite);
+            try {
+                const stats = await fs.stat(devicePath);
+                const size = stats.size;
+                const chunkSize = 1024 * 1024; // 1MB chunks
+                const totalChunks = Math.ceil(size / chunkSize);
                 
-                bytesWritten += toWrite;
+                // Open file for writing
+                const fileHandle = await fs.open(devicePath, 'w');
                 
-                if (progressCallback) {
-                    const progress = Math.floor((bytesWritten / size) * 100);
-                    progressCallback({
-                        pass: pass + 1,
-                        totalPasses: patterns.length,
-                        name: passInfo.name,
-                        progress: progress
-                    });
+                for (let i = 0; i < totalChunks; i++) {
+                    const chunkLength = Math.min(chunkSize, size - (i * chunkSize));
+                    const buffer = Buffer.alloc(chunkLength);
+                    
+                    // Fill buffer with repeating pattern
+                    for (let j = 0; j < chunkLength; j++) {
+                        buffer[j] = passInfo.buffer[j % passInfo.buffer.length];
+                    }
+                    
+                    // Write chunk to file
+                    await fileHandle.write(buffer, 0, buffer.length, i * chunkSize);
+                    
+                    // Report progress
+                    if (progressCallback) {
+                        const progress = Math.floor(((i + 1) / totalChunks) * 100);
+                        progressCallback({
+                            pass: pass + 1,
+                            totalPasses: patterns.length,
+                            name: passInfo.name,
+                            progress: progress
+                        });
+                    }
                 }
+                
+                // Close file after each pass
+                await fileHandle.close();
+            } catch (error) {
+                throw new Error(`Failed during Gutmann pass ${pass + 1} (${passInfo.name}): ${error.message}`);
             }
-            
-            // Sync and close after each pass
-            fs.fsyncSync(fd);
-            fs.closeSync(fd);
         }
     }
 
@@ -273,59 +285,60 @@ class SecureOverwriteEngine {
      */
     async schneierOverwrite(devicePath, progressCallback) {
         const passes = [
-            { name: 'Zero Fill', pattern: Buffer.alloc(1024, 0) },
-            { name: 'One Fill', pattern: Buffer.alloc(1024, 0xFF) },
-            { name: 'Random Data 1', pattern: null },
-            { name: 'Random Data 2', pattern: null },
-            { name: 'Random Data 3', pattern: null },
-            { name: 'Random Data 4', pattern: null },
-            { name: 'Random Data 5', pattern: null }
+            { name: 'Zero Fill', value: 0x00 },
+            { name: 'One Fill', value: 0xFF },
+            { name: 'Random Data 1', value: null },
+            { name: 'Random Data 2', value: null },
+            { name: 'Random Data 3', value: null },
+            { name: 'Random Data 4', value: null },
+            { name: 'Random Data 5', value: null }
         ];
 
         for (let pass = 0; pass < passes.length; pass++) {
             const passInfo = passes[pass];
             console.log(`Executing Schneier pass ${pass + 1}: ${passInfo.name}`);
             
-            const fd = fs.openSync(devicePath, 'w');
-            const stats = fs.fstatSync(fd);
-            const size = stats.size;
-            const bufferSize = 1024 * 1024; // 1MB buffer
-            const buffer = Buffer.alloc(bufferSize);
-            
-            // Fill buffer with pattern if not random
-            if (passInfo.pattern) {
-                for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
-                    passInfo.pattern.copy(buffer, i);
+            try {
+                const stats = await fs.stat(devicePath);
+                const size = stats.size;
+                const chunkSize = 1024 * 1024; // 1MB chunks
+                const totalChunks = Math.ceil(size / chunkSize);
+                
+                // Open file for writing
+                const fileHandle = await fs.open(devicePath, 'w');
+                
+                for (let i = 0; i < totalChunks; i++) {
+                    let buffer;
+                    const chunkLength = Math.min(chunkSize, size - (i * chunkSize));
+                    
+                    if (passInfo.value !== null) {
+                        // Create buffer filled with specific value
+                        buffer = Buffer.alloc(chunkLength, passInfo.value);
+                    } else {
+                        // Create buffer with random data
+                        buffer = crypto.randomBytes(chunkLength);
+                    }
+                    
+                    // Write chunk to file
+                    await fileHandle.write(buffer, 0, buffer.length, i * chunkSize);
+                    
+                    // Report progress
+                    if (progressCallback) {
+                        const progress = Math.floor(((i + 1) / totalChunks) * 100);
+                        progressCallback({
+                            pass: pass + 1,
+                            totalPasses: passes.length,
+                            name: passInfo.name,
+                            progress: progress
+                        });
+                    }
                 }
+                
+                // Close file after each pass
+                await fileHandle.close();
+            } catch (error) {
+                throw new Error(`Failed during Schneier pass ${pass + 1} (${passInfo.name}): ${error.message}`);
             }
-            
-            let bytesWritten = 0;
-            
-            while (bytesWritten < size) {
-                // For random data passes, generate new random data
-                if (!passInfo.pattern) {
-                    crypto.randomFillSync(buffer);
-                }
-                
-                const toWrite = Math.min(bufferSize, size - bytesWritten);
-                fs.writeSync(fd, buffer, 0, toWrite);
-                
-                bytesWritten += toWrite;
-                
-                if (progressCallback) {
-                    const progress = Math.floor((bytesWritten / size) * 100);
-                    progressCallback({
-                        pass: pass + 1,
-                        totalPasses: passes.length,
-                        name: passInfo.name,
-                        progress: progress
-                    });
-                }
-            }
-            
-            // Sync and close after each pass
-            fs.fsyncSync(fd);
-            fs.closeSync(fd);
         }
     }
 
@@ -341,7 +354,7 @@ class SecureOverwriteEngine {
         for (let i = 0; i < passCount; i++) {
             passes.push({
                 name: `Pfitzner Random Pass ${i + 1}`,
-                pattern: this.generateRandomBuffer(1024)
+                buffer: crypto.randomBytes(1024)
             });
         }
 
@@ -349,67 +362,45 @@ class SecureOverwriteEngine {
             const passInfo = passes[pass];
             console.log(`Executing Pfitzner pass ${pass + 1}: ${passInfo.name}`);
             
-            const fd = fs.openSync(devicePath, 'w');
-            const stats = fs.fstatSync(fd);
-            const size = stats.size;
-            const bufferSize = 1024 * 1024; // 1MB buffer
-            const buffer = Buffer.alloc(bufferSize);
-            
-            // Fill buffer with pattern
-            for (let i = 0; i < bufferSize; i += passInfo.pattern.length) {
-                passInfo.pattern.copy(buffer, i);
-            }
-            
-            let bytesWritten = 0;
-            
-            while (bytesWritten < size) {
-                const toWrite = Math.min(bufferSize, size - bytesWritten);
-                fs.writeSync(fd, buffer, 0, toWrite);
+            try {
+                const stats = await fs.stat(devicePath);
+                const size = stats.size;
+                const chunkSize = 1024 * 1024; // 1MB chunks
+                const totalChunks = Math.ceil(size / chunkSize);
                 
-                bytesWritten += toWrite;
+                // Open file for writing
+                const fileHandle = await fs.open(devicePath, 'w');
                 
-                if (progressCallback) {
-                    const progress = Math.floor((bytesWritten / size) * 100);
-                    progressCallback({
-                        pass: pass + 1,
-                        totalPasses: passes.length,
-                        name: passInfo.name,
-                        progress: progress
-                    });
+                for (let i = 0; i < totalChunks; i++) {
+                    const chunkLength = Math.min(chunkSize, size - (i * chunkSize));
+                    const buffer = Buffer.alloc(chunkLength);
+                    
+                    // Fill buffer with repeating pattern
+                    for (let j = 0; j < chunkLength; j++) {
+                        buffer[j] = passInfo.buffer[j % passInfo.buffer.length];
+                    }
+                    
+                    // Write chunk to file
+                    await fileHandle.write(buffer, 0, buffer.length, i * chunkSize);
+                    
+                    // Report progress
+                    if (progressCallback) {
+                        const progress = Math.floor(((i + 1) / totalChunks) * 100);
+                        progressCallback({
+                            pass: pass + 1,
+                            totalPasses: passes.length,
+                            name: passInfo.name,
+                            progress: progress
+                        });
+                    }
                 }
+                
+                // Close file after each pass
+                await fileHandle.close();
+            } catch (error) {
+                throw new Error(`Failed during Pfitzner pass ${pass + 1} (${passInfo.name}): ${error.message}`);
             }
-            
-            // Sync and close after each pass
-            fs.fsyncSync(fd);
-            fs.closeSync(fd);
         }
-    }
-
-    /**
-     * Generate a buffer with random data
-     */
-    generateRandomBuffer(size) {
-        const buffer = Buffer.alloc(size);
-        crypto.randomFillSync(buffer);
-        return buffer;
-    }
-
-    /**
-     * Generate a buffer with specific pattern
-     */
-    generatePatternBuffer(size, ...patternBytes) {
-        const buffer = Buffer.alloc(size);
-        for (let i = 0; i < size; i++) {
-            buffer[i] = patternBytes[i % patternBytes.length];
-        }
-        return buffer;
-    }
-
-    /**
-     * Sleep function for simulation
-     */
-    sleep(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 

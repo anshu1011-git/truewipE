@@ -141,9 +141,12 @@ function getIpAddress() {
 async function executeWipeWithTrueWipe(method, verificationLevel) {
     console.log(`Starting wipe process with ${method} method`);
     
+    // Default to 7-pass if no method specified
+    const wipeMethod = method || '7-pass';
+    
     // If verification level is provided, use advanced wipe
     if (verificationLevel) {
-        await truewipe.executeAdvancedWipe(method, verificationLevel, (status) => {
+        await truewipe.executeAdvancedWipe(wipeMethod, verificationLevel, (status) => {
             // Report progress to admin panel
             if (status.progress !== undefined && currentJobId) {
                 socket.emit('job_status_update', {
@@ -154,8 +157,8 @@ async function executeWipeWithTrueWipe(method, verificationLevel) {
             }
         });
     } else {
-        // Use basic wipe
-        await truewipe.executeWipe(method, (status) => {
+        // Use basic wipe with 7-pass as default
+        await truewipe.executeWipe(wipeMethod, (status) => {
             // Report progress to admin panel
             if (status.progress !== undefined && currentJobId) {
                 socket.emit('job_status_update', {

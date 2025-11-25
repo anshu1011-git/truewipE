@@ -35,15 +35,15 @@ echo [WARNING] Protecting C: drive (assumed OS partition)
 echo   This drive will NOT be wiped
 echo.
 
-REM Display wipe options
+REM Display wipe options with 7-pass as default
 echo [STATUS] Select wipe method:
 echo   1) 1-Pass Overwrite (Fast)
 echo   2) 3-Pass Overwrite (DoD Standard)
-echo   3) 7-Pass Overwrite (Enhanced Security)
+echo   3) 7-Pass Overwrite (Enhanced Security) [DEFAULT]
 echo   4) Exit
 echo.
 
-set /p choice="Enter your choice (1-4): "
+set /p choice="Enter your choice (1-4, default is 3): "
 if "%choice%"=="1" (
     set WIPE_METHOD=1-pass
     echo [STATUS] Selected 1-Pass Overwrite method
@@ -52,10 +52,13 @@ if "%choice%"=="1" (
     echo [STATUS] Selected 3-Pass Overwrite method
 ) else if "%choice%"=="3" (
     set WIPE_METHOD=7-pass
-    echo [STATUS] Selected 7-Pass Overwrite method
+    echo [STATUS] Selected 7-Pass Overwrite method (DEFAULT)
 ) else if "%choice%"=="4" (
     echo [STATUS] Exiting TrueWipe...
     exit /b
+) else if "%choice%"=="" (
+    set WIPE_METHOD=7-pass
+    echo [STATUS] Using default 7-Pass Overwrite method
 ) else (
     echo [ERROR] Invalid choice. Exiting.
     exit /b

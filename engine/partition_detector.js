@@ -384,10 +384,10 @@ class OSPartitionDetector {
         // This requires elevated permissions in a real implementation
         // For now, we'll return a placeholder
         try {
-            const fd = await fs.open(devicePath, 'r');
+            const fileHandle = await fs.open(devicePath, 'r');
             const buffer = Buffer.alloc(1024);
-            await fd.read(buffer, 0, 1024, 0);
-            await fd.close();
+            await fileHandle.read(buffer, 0, 1024, 0);
+            await fileHandle.close();
             return buffer;
         } catch (error) {
             // Return empty buffer if we can't read

@@ -445,10 +445,10 @@ if (require.main === module) {
             console.log(`  Available Wipe Methods: ${info.wipeMethods.join(', ')}`);
             console.log();
             
-            // Execute a demo wipe
-            console.log('Starting demo wipe process...\n');
+            // Execute a demo wipe with 7-pass method
+            console.log('Starting demo wipe process with 7-pass method...\n');
             
-            truewipe.executeWipe('1-pass', (status) => {
+            truewipe.executeWipe('7-pass', (status) => {
                 if (status.error) {
                     console.error(`Error: ${status.error}`);
                 } else {
